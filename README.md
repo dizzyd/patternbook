@@ -6,9 +6,16 @@ easier to use when there are a lot of recipes:
 - **Sorted** alphabetically by name.
 - **Searchable.** The search box has focus as soon as the picker opens. Every word you
   type has to appear in the name, so `iron plate` finds "Iron plate".
-- **Enter** picks the first match once you have typed something.
-- **Scrolls.** The grid shows at most 8×6 recipes and scrolls the rest, where vanilla
-  keeps growing until the picker runs off the screen.
+- **Enter** picks the selected recipe, outlined in blue. Typing selects the first match,
+  and pointing at a recipe selects it. It stays selected after the mouse moves away, so
+  the outline always marks the recipe the details below describe.
+- **Confirm before choosing**, the switch beside the search box. When it is on, picking a recipe
+  asks "Make … ?" first: Enter or Confirm takes it, Escape or Cancel goes back to the
+  picker. It is off by default, and the picker remembers it across restarts.
+- **Scrolls.** The grid shows at most 10×8 recipes, fewer if the screen is too small for
+  that, and scrolls the rest. Vanilla keeps growing until the picker runs off the screen.
+  A search shrinks the picker to its matches, keeping the top edge and width where they
+  were so the search box does not move.
 
 The picker is client-side only. The mod sends the same packets as vanilla, so it works
 on servers that do not have it installed.
@@ -47,9 +54,12 @@ installed. So Smithing Plus with its picker switched off does not make this mod 
 ```json
 {
   "OverrideSmithingPlus": false,
-  "OverrideAnvilGuard": false
+  "OverrideAnvilGuard": false,
+  "ConfirmChoice": false
 }
 ```
+
+`ConfirmChoice` is the picker's switch; flipping it there writes it here.
 
 ## Building
 

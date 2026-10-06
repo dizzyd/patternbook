@@ -318,6 +318,27 @@ namespace PatternBook.Tests
         }
 
         [VsTest(TimeoutMs = 60000)]
+        public async Task TheFirstMatchIsHighlighted()
+        {
+            // The box's mouse rests mid-screen, over the grid: a resting mouse must not select
+            var (_, dlg) = await OpenPicker();
+            await Frames.Wait(5);
+            var grid = (GuiElementScrollingSkillGrid)dlg.SingleComposer.GetElement("grid");
+            Assert.Equal(-1, grid.SelectedIndex, "nothing highlighted before typing");
+
+            await Input.Type("hammer");
+            await Frames.Wait(5);
+            grid = (GuiElementScrollingSkillGrid)dlg.SingleComposer.GetElement("grid");
+            Assert.Equal(0, grid.SelectedIndex, "first match highlighted, mouse or no mouse");
+            Log(await Shot.Take("patternbook-highlighted.png"));
+
+            await Input.Type("zzzz");
+            await Frames.Wait(5);
+            grid = (GuiElementScrollingSkillGrid)dlg.SingleComposer.GetElement("grid");
+            Assert.Equal(-1, grid.SelectedIndex, "nothing highlighted without a match");
+        }
+
+        [VsTest(TimeoutMs = 60000)]
         public async Task EnterPicksTheFirstMatch()
         {
             var (anvil, dlg) = await OpenPicker();
@@ -337,6 +358,56 @@ namespace PatternBook.Tests
         }
 
         [VsTest(TimeoutMs = 60000)]
+        public async Task ConfirmAsksBeforeChoosingAndIsSaved()
+        {
+            var mod = PatternBookModSystem.Instance;
+            try
+            {
+                var (anvil, dlg) = await OpenPicker();
+                await OnClient();
+                dlg.SingleComposer.GetSwitch("confirm").OnMouseDownOnElement(Capi, new MouseEvent(0, 0, EnumMouseButton.Left, 0));
+                Assert.True(mod.Config.ConfirmChoice, "the switch turns confirming on");
+                var saved = Capi.LoadModConfig<PatternBookConfig>(PatternBookConfig.FileName);
+                Assert.True(saved.ConfirmChoice, "and it is written to the config file");
+
+                await Input.Type("hammer");
+                await Frames.Wait(5);
+                string first = dlg.VisibleNames.First();
+
+                // Escape cancels the confirmation only, leaving the picker up
+                await Input.Press(GlKeys.Enter);
+                await Gui.WaitFor<GuiDialogConfirmRecipe>(120);
+                Log(await Shot.Take("patternbook-confirm.png"));
+                await Input.Press(GlKeys.Escape);
+                await Gui.WaitGone<GuiDialogConfirmRecipe>(120);
+                Assert.True(await Gui.IsOpen<GuiDialogSearchableRecipeSelector>(), "picker still open after cancelling");
+
+                // Enter twice: once to pick, once to confirm
+                await Input.Press(GlKeys.Enter);
+                await Gui.WaitFor<GuiDialogConfirmRecipe>(120);
+                await Input.Press(GlKeys.Enter);
+                await Gui.WaitGone<GuiDialogSearchableRecipeSelector>(120);
+
+                await OnClient();
+                var recipe = Capi.GetSmithingRecipes().First(r => r.RecipeId == anvil.SelectedRecipeId);
+                Assert.Equal(first, recipe.Output.ResolvedItemstack.GetName(), "confirmed recipe");
+
+                await Gui.CloseDialogs();
+                await OnServer();
+                var (_, again) = await OpenPicker();
+                Assert.True(again.SingleComposer.GetSwitch("confirm").On, "the switch stays on the next time the picker opens");
+            }
+            finally
+            {
+                // Put the real config back on disk; mod.Config is this test's stand-in
+                await OnClient();
+                mod.Config.ConfirmChoice = false;
+                Capi.StoreModConfig(savedConfig, PatternBookConfig.FileName);
+                await Gui.CloseDialogs();
+            }
+        }
+
+        [VsTest(TimeoutMs = 60000)]
         public async Task LongListsScrollInsteadOfGrowing()
         {
             await Player.StandNear(P(4, 1, 4));
@@ -348,11 +419,13 @@ namespace PatternBook.Tests
                 .Where(i => i.Code != null && i.Code.Path.StartsWith("ingot-"))
                 .Concat(Capi.World.Items.Where(i => i.Code != null && i.Code.Path.StartsWith("metalplate-")))
                 .Concat(Capi.World.Items.Where(i => i.Code != null && i.Code.Path.StartsWith("nugget-")))
+                .Concat(Capi.World.Items.Where(i => i.Code != null && i.Code.Path.StartsWith("metalbit-")))
+                .Concat(Capi.World.Items.Where(i => i.Code != null && i.Code.Path.StartsWith("metalchain-")))
                 .Select(i => new ItemStack(i))
-                .Take(120)
+                .Take(150)
                 .ToArray();
             Log($"{stacks.Length} entries");
-            Assert.Greater(stacks.Length, 8 * 6, "more entries than the grid shows");
+            Assert.Greater(stacks.Length, GuiDialogSearchableRecipeSelector.MaxCols * GuiDialogSearchableRecipeSelector.MaxVisibleRows, "more entries than the grid shows");
 
             int selected = -1;
             var dlg = new GuiDialogSearchableRecipeSelector("Scroll test", stacks, i => selected = i, () => { }, P(4, 1, 4), Capi);
@@ -360,7 +433,9 @@ namespace PatternBook.Tests
             await Frames.Wait(5);
 
             var grid = dlg.SingleComposer.GetElement("grid");
-            Assert.Close(6 * GuiElementScrollingSkillGrid.UnscaledCellSize, grid.Bounds.fixedHeight, 0.01, "grid is capped at six rows");
+            // The cap shrinks to fit a small screen, so assert the bound rather than the exact count
+            Assert.LessOrEqual(grid.Bounds.fixedHeight, GuiDialogSearchableRecipeSelector.MaxVisibleRows * GuiElementScrollingSkillGrid.UnscaledCellSize + 0.01, "grid is capped");
+            Assert.LessOrEqual(dlg.SingleComposer.Bounds.OuterHeight, (double)Capi.Render.FrameHeight, "dialog fits on the screen");
 
             var scrollbar = dlg.SingleComposer.GetScrollbar("scrollbar");
             Assert.Close(0f, scrollbar.CurrentYPosition, 0.01f, "starts at the top");
@@ -371,6 +446,27 @@ namespace PatternBook.Tests
             await Frames.Wait(5);
             Assert.Greater(scrollbar.CurrentYPosition, 0f, "wheel scrolls down");
             Log(await Shot.Take("patternbook-scrolled.png"));
+
+            // A narrow search shrinks the dialog to the matches, keeping its top edge
+            await OnClient();
+            double cell = GuiElementScrollingSkillGrid.UnscaledCellSize;
+            double widthBefore = dlg.SingleComposer.Bounds.OuterWidth;
+            double topBefore = dlg.SingleComposer.Bounds.absY;
+            await Input.Type("copper");
+            await Frames.Wait(5);
+
+            await OnClient();
+            int matches = dlg.VisibleNames.Count();
+            var shrunk = dlg.SingleComposer.GetElement("grid");
+            int cols = (int)Math.Round(shrunk.Bounds.fixedWidth / cell);
+            Log($"{matches} matches in {cols} columns");
+            Assert.Greater(matches, 0, "something matches 'copper'");
+            Assert.Close((matches + cols - 1) / cols * cell, shrunk.Bounds.fixedHeight, 0.01, "grid is as tall as its matches");
+            Assert.True(dlg.SingleComposer.GetScrollbar("scrollbar") == null, "no scrollbar when nothing overflows");
+            Assert.Close(widthBefore, dlg.SingleComposer.Bounds.OuterWidth, 0.5, "width does not change");
+            Assert.Close(topBefore, dlg.SingleComposer.Bounds.absY, 1.0, "top edge stays put");
+            Assert.Equal("copper", dlg.SingleComposer.GetTextInput("search").GetText(), "search text survives the recompose");
+            Log(await Shot.Take("patternbook-shrunk.png"));
 
             await OnClient();
             dlg.TryClose();

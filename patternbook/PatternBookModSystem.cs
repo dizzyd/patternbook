@@ -58,6 +58,18 @@ public class PatternBookModSystem : ModSystem
         return config;
     }
 
+    public void SaveConfig()
+    {
+        try
+        {
+            capi.StoreModConfig(Config, PatternBookConfig.FileName);
+        }
+        catch (Exception e)
+        {
+            capi.Logger.Error("[patternbook] Could not write {0}: {1}", PatternBookConfig.FileName, e.Message);
+        }
+    }
+
     /// <summary>
     /// The mod whose own picker behaviour should win over this one, or null to use this one.
     /// Asked each time a picker opens, so load order between the mods does not matter.

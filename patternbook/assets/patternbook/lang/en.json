@@ -1,5 +1,9 @@
 {
     "search-placeholder": "Search...",
     "no-matches": "No matching recipes",
-    "match-count": "{0} of {1}"
+    "match-count": "{0} of {1}",
+    "confirm-toggle": "Confirm",
+    "confirm-recipe": "Make {0}?",
+    "confirm-hover": "Ask before taking a recipe",
+    "ingredient-count": "{0}x {1}"
 }

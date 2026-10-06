@@ -18,8 +18,16 @@ public class GuiElementScrollingSkillGrid : GuiElement
     List<SkillItem> items = new();
     double scrollY;
 
+    // Where the mouse was when it last chose a slot; a mouse resting over the grid must
+    // not keep overriding a selection made by typing
+    int lastMouseX = int.MinValue, lastMouseY = int.MinValue;
+
     LoadedTexture slotTexture;
     LoadedTexture hoverTexture;
+    LoadedTexture selectedTexture;
+
+    /// <summary>Index into the current items drawn with a selection outline, or -1. The owner sets it.</summary>
+    public int SelectedIndex = -1;
 
     public Action<int> OnSlotClick;
     public Action<int> OnSlotOver;
@@ -30,6 +38,7 @@ public class GuiElementScrollingSkillGrid : GuiElement
         this.cols = cols;
         slotTexture = new LoadedTexture(capi);
         hoverTexture = new LoadedTexture(capi);
+        selectedTexture = new LoadedTexture(capi);
 
         Bounds.fixedWidth = cols * UnscaledCellSize;
         Bounds.fixedHeight = visibleRows * UnscaledCellSize;
@@ -41,6 +50,9 @@ public class GuiElementScrollingSkillGrid : GuiElement
     {
         this.items = items;
         scrollY = 0;
+        SelectedIndex = -1;
+        lastMouseX = api.Input.MouseX;
+        lastMouseY = api.Input.MouseY;
     }
 
     /// <param name="y">Offset in unscaled units, as the scrollbar reports it.</param>
@@ -74,6 +86,19 @@ public class GuiElementScrollingSkillGrid : GuiElement
         generateTexture(hoverSurface, ref hoverTexture);
         hoverCtx.Dispose();
         hoverSurface.Dispose();
+
+        // An outline in the hotbar's active slot colour, so it reads as "selected" and stays
+        // distinct from the hover fill when both land on the same slot
+        ImageSurface selectedSurface = new ImageSurface(Format.Argb32, w, h);
+        Context selectedCtx = genContext(selectedSurface);
+        double line = scaled(2);
+        selectedCtx.SetSourceRGBA(GuiStyle.ActiveSlotColor);
+        selectedCtx.LineWidth = line;
+        RoundRectangle(selectedCtx, line / 2, line / 2, w - line, h - line, GuiStyle.ElementBGRadius);
+        selectedCtx.Stroke();
+        generateTexture(selectedSurface, ref selectedTexture);
+        selectedCtx.Dispose();
+        selectedSurface.Dispose();
     }
 
     public override void RenderInteractiveElements(float deltaTime)
@@ -104,6 +129,10 @@ public class GuiElementScrollingSkillGrid : GuiElement
                 {
                     api.Render.Render2DTexture(hoverTexture.TextureId, (float)x, (float)y, (float)slotSize, (float)slotSize);
                 }
+                if (i == SelectedIndex)
+                {
+                    api.Render.Render2DTexturePremultipliedAlpha(selectedTexture.TextureId, x, y, slotSize, slotSize);
+                }
 
                 SkillItem item = items[i];
                 item.RenderHandler?.Invoke(item.Code, deltaTime, x + 1, y + 1);
@@ -112,7 +141,16 @@ public class GuiElementScrollingSkillGrid : GuiElement
 
         api.Render.PopScissor();
 
-        if (hovered >= 0) OnSlotOver?.Invoke(hovered);
+        // Only a mouse that moves chooses a slot. One left resting where the grid happened to
+        // put a recipe under it, after a search or a scroll, would otherwise take the
+        // selection from the first match on the very next frame.
+        int mouseX = api.Input.MouseX, mouseY = api.Input.MouseY;
+        if (hovered >= 0 && (mouseX != lastMouseX || mouseY != lastMouseY))
+        {
+            lastMouseX = mouseX;
+            lastMouseY = mouseY;
+            OnSlotOver?.Invoke(hovered);
+        }
     }
 
     /// <returns>The index into the current items under an absolute mouse position, or -1.</returns>
@@ -154,5 +192,6 @@ public class GuiElementScrollingSkillGrid : GuiElement
         base.Dispose();
         slotTexture.Dispose();
         hoverTexture.Dispose();
+        selectedTexture.Dispose();
     }
 }

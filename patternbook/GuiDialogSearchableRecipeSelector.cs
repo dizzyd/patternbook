@@ -15,8 +15,17 @@ namespace patternbook;
 /// </summary>
 public class GuiDialogSearchableRecipeSelector : GuiDialogGeneric
 {
-    const int MaxCols = 8;
-    const int MaxVisibleRows = 6;
+    public const int MaxCols = 10;
+    public const int MaxVisibleRows = 8;
+
+    /// <summary>Unscaled height of everything but the grid: title bar, padding, search row, details.</summary>
+    const double NonGridHeight = 250;
+    const double NonGridWidth = 80;
+    const int MinVisibleRows = 3;
+
+    const double GridTop = 70;
+    const double ScrollbarWidth = 20;
+    const double ScrollbarGap = 5;
 
     record Entry(int Index, SkillItem Item, string SearchText);
 
@@ -30,8 +39,20 @@ public class GuiDialogSearchableRecipeSelector : GuiDialogGeneric
     readonly List<Entry> sorted;
     List<Entry> filtered;
 
-    int prevSlotOver = -1;
     bool didSelect;
+    GuiDialogConfirmRecipe confirmDialog;
+
+    // Fixed when the picker opens, from the full list: the width never changes, so the search
+    // box stays put, and the height only shrinks as a search narrows the list.
+    int cols;
+    int maxVisibleRows;
+    double innerWidth;
+    double? dialogTop;
+
+    // What the current composition was built for, so a search recomposes only when it must
+    int composedRows = -1;
+    bool composedScrollbar;
+    bool recomposing;
 
     public GuiDialogSearchableRecipeSelector(string dialogTitle, ItemStack[] recipeOutputs, Action<int> onSelectedRecipe, Action onCancelSelect, BlockPos blockEntityPos, ICoreClientAPI capi) : base(dialogTitle, capi)
     {
@@ -91,25 +112,81 @@ public class GuiDialogSearchableRecipeSelector : GuiDialogGeneric
     void SetupDialog()
     {
         double cell = GuiElementScrollingSkillGrid.UnscaledCellSize;
-        int cols = Math.Clamp(skillItems.Count, 1, MaxCols);
-        int rows = Math.Max(1, (skillItems.Count + cols - 1) / cols);
-        int visibleRows = Math.Min(rows, MaxVisibleRows);
 
+        // As big as MaxCols x MaxVisibleRows, but no bigger than 90% of the screen allows
+        double screenW = capi.Render.FrameWidth / GuiElement.scaled(1);
+        double screenH = capi.Render.FrameHeight / GuiElement.scaled(1);
+        int fitCols = Math.Max(1, (int)((screenW * 0.9 - NonGridWidth) / cell));
+        int fitRows = Math.Max(MinVisibleRows, (int)((screenH * 0.9 - NonGridHeight) / cell));
+
+        cols = Math.Clamp(skillItems.Count, 1, Math.Min(MaxCols, fitCols));
+        maxVisibleRows = Math.Min(MaxVisibleRows, fitRows);
+
+        // Room for the scrollbar only if the full list will ever need one
+        bool everScrolls = RowsFor(skillItems.Count) > maxVisibleRows;
+        innerWidth = Math.Max(400, cols * cell + (everScrolls ? ScrollbarGap + ScrollbarWidth : 0));
+
+        ApplyFilter();
+    }
+
+    /// <summary>
+    /// The unscaled top for a line of text whose capitals are centred on <paramref name="centreY"/>.
+    /// Text is drawn with its baseline one ascent below the top of its bounds, so centring the
+    /// bounds would leave the letters sitting high; this lines them up with a control's middle.
+    /// </summary>
+    static double TextTopCentredOn(CairoFont font, double centreY)
+    {
+        double ascent = font.GetFontExtents().Ascent / GuiElement.scaled(1);
+        double capHeight = font.UnscaledFontsize * 0.7;
+        return centreY + capHeight / 2 - ascent;
+    }
+
+    int RowsFor(int count) => Math.Max(1, (count + cols - 1) / cols);
+
+    /// <summary>
+    /// Builds the dialog for a grid of the given height, keeping whatever has been typed.
+    /// Only the height and whether there is a scrollbar ever differ between compositions.
+    /// </summary>
+    void Compose(int visibleRows, bool withScrollbar)
+    {
+        double cell = GuiElementScrollingSkillGrid.UnscaledCellSize;
         double gridWidth = cols * cell;
-        double scrollbarWidth = 20;
-        double innerWidth = Math.Max(300, gridWidth + 5 + scrollbarWidth);
-        double countWidth = 80;
+        double gridHeight = visibleRows * cell;
 
-        ElementBounds searchBounds = ElementBounds.Fixed(0, 30, innerWidth - countWidth - 10, 30);
-        ElementBounds countBounds = ElementBounds.Fixed(innerWidth - countWidth, 36, countWidth, 25);
-        ElementBounds gridBounds = ElementBounds.Fixed(0, 70, gridWidth, visibleRows * cell);
-        ElementBounds scrollbarBounds = ElementBounds.Fixed(gridWidth + 5, 70, scrollbarWidth, visibleRows * cell);
-        ElementBounds nameBounds = ElementBounds.Fixed(0, 70 + visibleRows * cell + 15, innerWidth, 33);
-        ElementBounds descBounds = nameBounds.BelowCopy(0, 10, 0, 0);
-        ElementBounds ingredientBounds = descBounds.BelowCopy(0, 20, 0, 0);
+        // Centre the grid, with its scrollbar if it has one, in the dialog's width
+        double blockWidth = gridWidth + (withScrollbar ? ScrollbarGap + ScrollbarWidth : 0);
+        double gridLeft = Math.Floor((innerWidth - blockWidth) / 2);
+
+        // Search row: [search box][12 of 60][switch Confirm]
+        double confirmWidth = 100;
+        double countWidth = 70;
+        double searchWidth = innerWidth - countWidth - confirmWidth - 20;
+        ElementBounds searchBounds = ElementBounds.Fixed(0, 30, searchWidth, 30);
+        double rowTop = 30, rowHeight = 30;
+        CairoFont rowFont = CairoFont.WhiteDetailText();
+        double rowTextTop = TextTopCentredOn(rowFont, rowTop + rowHeight / 2);
+        ElementBounds countBounds = ElementBounds.Fixed(searchWidth + 10, rowTextTop, countWidth, rowHeight);
+        ElementBounds switchBounds = ElementBounds.Fixed(innerWidth - confirmWidth, rowTop, rowHeight, rowHeight);
+        ElementBounds switchLabelBounds = ElementBounds.Fixed(innerWidth - confirmWidth + 36, rowTextTop, confirmWidth - 36, rowHeight);
+        ElementBounds switchHoverBounds = ElementBounds.Fixed(innerWidth - confirmWidth, rowTop, confirmWidth, rowHeight);
+
+        ElementBounds gridBounds = ElementBounds.Fixed(gridLeft, GridTop, gridWidth, gridHeight);
+        ElementBounds scrollbarBounds = ElementBounds.Fixed(gridLeft + gridWidth + ScrollbarGap, GridTop, ScrollbarWidth, gridHeight);
+
+        // Details: the name with what it takes on the right, and the description under them
+        double requiresWidth = 180;
+        ElementBounds nameBounds = ElementBounds.Fixed(0, GridTop + gridHeight + 12, innerWidth - requiresWidth - 10, 30);
+        ElementBounds requiresBounds = ElementBounds.Fixed(innerWidth - requiresWidth, nameBounds.fixedY + 5, requiresWidth, 25);
+        ElementBounds descBounds = ElementBounds.Fixed(0, nameBounds.fixedY + 32, innerWidth, 40);
 
         ElementBounds bgBounds = ElementBounds.Fill.WithFixedPadding(GuiStyle.ElementToDialogPadding);
         bgBounds.BothSizing = ElementSizing.FitToChildren;
+
+        // Centred on the first composition, then held at that top edge so a shrinking
+        // dialog does not move the search box out from under the player
+        ElementBounds dialogBounds = dialogTop is double top
+            ? ElementStdBounds.AutosizedMainDialogAtPos(top)
+            : ElementStdBounds.AutosizedMainDialog;
 
         var grid = new GuiElementScrollingSkillGrid(capi, cols, visibleRows, gridBounds)
         {
@@ -117,56 +194,95 @@ public class GuiDialogSearchableRecipeSelector : GuiDialogGeneric
             OnSlotOver = OnSlotOver
         };
 
-        SingleComposer = capi.Gui
-            .CreateCompo("patternbook-recipeselect" + blockEntityPos, ElementStdBounds.AutosizedMainDialog)
+        string searchText = SingleComposer?.GetTextInput("search")?.GetText() ?? "";
+        bool hadFocus = SingleComposer != null && IsOpened();
+
+        // The search box reports its text while being built, and again when it is given back
+        // what was typed; neither is a new search
+        recomposing = true;
+        var composer = capi.Gui
+            .CreateCompo("patternbook-recipeselect" + blockEntityPos, dialogBounds)
             .AddShadedDialogBG(bgBounds, true)
             .AddDialogTitleBar(DialogTitle, () => TryClose())
             .BeginChildElements(bgBounds)
                 .AddTextInput(searchBounds, OnSearchChanged, CairoFont.WhiteSmallishText(), "search")
-                .AddDynamicText("", CairoFont.WhiteDetailText().WithOrientation(EnumTextOrientation.Right), countBounds, "count")
-                .AddInteractiveElement(grid, "grid")
-                .AddVerticalScrollbar(OnScroll, scrollbarBounds, "scrollbar")
+                .AddDynamicText("", rowFont.Clone().WithOrientation(EnumTextOrientation.Right), countBounds, "count")
+                .AddSwitch(OnConfirmToggled, switchBounds, "confirm")
+                .AddStaticText(Lang.Get("patternbook:confirm-toggle"), rowFont, switchLabelBounds)
+                .AddHoverText(Lang.Get("patternbook:confirm-hover"), CairoFont.WhiteDetailText(), 250, switchHoverBounds)
+                .AddInteractiveElement(grid, "grid");
+        if (withScrollbar)
+        {
+            composer.AddVerticalScrollbar(OnScroll, scrollbarBounds, "scrollbar");
+        }
+        SingleComposer = composer
                 .AddDynamicText("", CairoFont.WhiteSmallishText(), nameBounds, "name")
+                .AddDynamicText("", CairoFont.WhiteDetailText().WithOrientation(EnumTextOrientation.Right), requiresBounds, "requires")
                 .AddDynamicText("", CairoFont.WhiteDetailText(), descBounds, "desc")
-                .AddDynamicText("", CairoFont.WhiteDetailText(), ingredientBounds, "ingredient")
             .EndChildElements()
             .Compose();
 
-        grid.Scrollbar = SingleComposer.GetScrollbar("scrollbar");
-        SingleComposer.GetTextInput("search").SetPlaceHolderText(Lang.Get("patternbook:search-placeholder"));
+        dialogTop ??= SingleComposer.Bounds.absY / GuiElement.scaled(1);
+        composedRows = visibleRows;
+        composedScrollbar = withScrollbar;
 
-        ApplyFilter();
+        SingleComposer.GetSwitch("confirm").SetValue(PatternBookModSystem.Instance?.Config.ConfirmChoice ?? false);
+        grid.Scrollbar = SingleComposer.GetScrollbar("scrollbar");
+
+        var search = SingleComposer.GetTextInput("search");
+        search.SetPlaceHolderText(Lang.Get("patternbook:search-placeholder"));
+        if (searchText.Length > 0) search.SetValue(searchText);
+        recomposing = false;
+        if (hadFocus) SingleComposer.FocusElement(search.TabIndex);
     }
 
     GuiElementScrollingSkillGrid Grid => (GuiElementScrollingSkillGrid)SingleComposer.GetElement("grid");
 
     void OnSearchChanged(string text)
     {
+        if (recomposing) return;
+
         string[] terms = (text ?? "").ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
         filtered = terms.Length == 0
             ? sorted
             : sorted.Where(e => terms.All(t => e.SearchText.Contains(t))).ToList();
 
-        // Called once during Compose, before the grid exists to receive it
         if (SingleComposer?.Composed == true) ApplyFilter();
     }
 
     void ApplyFilter()
     {
+        // As tall as the matches need, up to the cap; a scrollbar only if they overflow it
+        int rows = RowsFor(filtered.Count);
+        int visibleRows = Math.Min(rows, maxVisibleRows);
+        bool withScrollbar = rows > visibleRows;
+        if (visibleRows != composedRows || withScrollbar != composedScrollbar)
+        {
+            Compose(visibleRows, withScrollbar);
+        }
+
         var grid = Grid;
         grid.SetItems(filtered.Select(e => e.Item).ToList());
 
-        double cell = GuiElementScrollingSkillGrid.UnscaledCellSize;
-        var scrollbar = SingleComposer.GetScrollbar("scrollbar");
-        scrollbar.SetHeights((float)grid.Bounds.fixedHeight, (float)Math.Max(grid.Rows * cell, grid.Bounds.fixedHeight));
-        scrollbar.SetScrollbarPosition(0);
+        if (SingleComposer.GetScrollbar("scrollbar") is { } scrollbar)
+        {
+            double cell = GuiElementScrollingSkillGrid.UnscaledCellSize;
+            scrollbar.SetHeights((float)grid.Bounds.fixedHeight, (float)(grid.Rows * cell));
+            scrollbar.SetScrollbarPosition(0);
+        }
 
         SingleComposer.GetDynamicText("count").SetNewText(Lang.Get("patternbook:match-count", filtered.Count, sorted.Count));
 
-        prevSlotOver = -1;
+        // Start on the first match once something is typed. Not on an empty search, where
+        // Enter would pick whatever sorts first.
+        grid.SelectedIndex = filtered.Count > 0 && filtered != sorted ? 0 : -1;
         if (filtered.Count == 0)
         {
             ShowDetails(Lang.Get("patternbook:no-matches"), "", "");
+        }
+        else if (grid.SelectedIndex >= 0)
+        {
+            ShowItem(grid.SelectedIndex);
         }
         else
         {
@@ -179,23 +295,30 @@ public class GuiDialogSearchableRecipeSelector : GuiDialogGeneric
         Grid.SetScrollY(value);
     }
 
-    void ShowDetails(string name, string desc, string ingredient)
+    void ShowDetails(string name, string desc, string requires)
     {
         SingleComposer.GetDynamicText("name").SetNewText(name);
         SingleComposer.GetDynamicText("desc").SetNewText(desc);
-        SingleComposer.GetDynamicText("ingredient").SetNewText(ingredient);
+        SingleComposer.GetDynamicText("requires").SetNewText(requires);
     }
 
     void OnSlotOver(int num)
     {
-        if (num >= filtered.Count || num == prevSlotOver) return;
-        prevSlotOver = num;
+        // The hovered recipe becomes the selected one, and stays so after the mouse moves off,
+        // so the outline always marks the recipe the details describe and Enter picks
+        var grid = Grid;
+        if (num >= filtered.Count || num == grid.SelectedIndex) return;
+        grid.SelectedIndex = num;
+        ShowItem(num);
+    }
 
+    void ShowItem(int num)
+    {
         SkillItem item = filtered[num].Item;
         string requires = "";
         if (item.Data is ItemStack[] ingredients)
         {
-            requires = Lang.Get("recipeselector-requiredcount", ingredients[0].StackSize, ingredients[0].GetName().ToLower());
+            requires = Lang.Get("patternbook:ingredient-count", ingredients[0].StackSize, ingredients[0].GetName());
         }
         ShowDetails(item.Name, item.Description, requires);
     }
@@ -203,8 +326,51 @@ public class GuiDialogSearchableRecipeSelector : GuiDialogGeneric
     void OnSlotClick(int num)
     {
         if (num >= filtered.Count) return;
-        Select(filtered[num].Index);
+        Choose(num);
     }
+
+    void OnConfirmToggled(bool on)
+    {
+        // Clicking the switch takes focus; give it back so typing still searches
+        SingleComposer.FocusElement(SingleComposer.GetTextInput("search").TabIndex);
+
+        var mod = PatternBookModSystem.Instance;
+        if (mod == null) return;
+        mod.Config.ConfirmChoice = on;
+        mod.SaveConfig();
+    }
+
+    /// <summary>Takes the recipe at a grid position, asking first if confirming is switched on.</summary>
+    void Choose(int num)
+    {
+        if (confirmDialog?.IsOpened() == true) return;
+
+        Entry entry = filtered[num];
+        if (!SingleComposer.GetSwitch("confirm").On)
+        {
+            Select(entry.Index);
+            return;
+        }
+
+        confirmDialog = new GuiDialogConfirmRecipe(capi, Lang.Get("patternbook:confirm-recipe", entry.Item.Name), confirmed =>
+        {
+            confirmDialog = null;
+            if (confirmed)
+            {
+                Select(entry.Index);
+            }
+            else if (IsOpened())
+            {
+                // Back to typing where the player left off
+                Focus();
+                SingleComposer.FocusElement(SingleComposer.GetTextInput("search").TabIndex);
+            }
+        });
+        confirmDialog.TryOpen();
+    }
+
+    // Nothing behind the confirmation is clickable while it is up
+    public override bool ShouldReceiveMouseEvents() => confirmDialog?.IsOpened() != true && base.ShouldReceiveMouseEvents();
 
     void Select(int recipeIndex)
     {
@@ -221,13 +387,14 @@ public class GuiDialogSearchableRecipeSelector : GuiDialogGeneric
 
     public override void OnKeyDown(KeyEvent args)
     {
-        // Enter takes the first match, so "type a few letters, hit enter" picks a recipe.
-        // Not on an empty search, where it would pick whatever sorts first.
+        // Enter takes the selected recipe - the first match after typing, so "type a few
+        // letters, hit enter" picks a recipe - or whichever was hovered since
+        int selected = Grid.SelectedIndex;
         if ((args.KeyCode == (int)GlKeys.Enter || args.KeyCode == (int)GlKeys.KeypadEnter)
-            && filtered.Count > 0 && filtered != sorted)
+            && selected >= 0 && selected < filtered.Count)
         {
             args.Handled = true;
-            Select(filtered[0].Index);
+            Choose(selected);
             return;
         }
 
@@ -237,6 +404,7 @@ public class GuiDialogSearchableRecipeSelector : GuiDialogGeneric
     public override void OnGuiClosed()
     {
         base.OnGuiClosed();
+        confirmDialog?.TryClose();
 
         if (!didSelect)
         {

@@ -15,4 +15,10 @@ public class PatternBookConfig
     /// hooks the vanilla picker, so it does not appear in this one.
     /// </summary>
     public bool OverrideAnvilGuard { get; set; } = false;
+
+    /// <summary>
+    /// Ask "Make X?" before taking a recipe. Set from the switch on the picker, and saved
+    /// whenever it is flipped, so it holds across restarts.
+    /// </summary>
+    public bool ConfirmChoice { get; set; } = false;
 }
