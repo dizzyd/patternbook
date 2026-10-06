@@ -29,11 +29,17 @@ public class PatternBookModSystem : ModSystem
     // keeps singleplayer from registering the patch once per side.
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Client;
 
+    // ConfigKit takes registrations up to AssetsLoaded, which comes before StartClientSide
+    public override void StartPre(ICoreAPI api)
+    {
+        Config = LoadConfig(api);
+        RegisterWithConfigKit(api);
+    }
+
     public override void StartClientSide(ICoreClientAPI api)
     {
         capi = api;
         Instance = this;
-        Config = LoadConfig(api);
 
         RecipeSelectorSwap.Logger = api.Logger;
         harmony = new Harmony(HarmonyId);
@@ -56,6 +62,49 @@ public class PatternBookModSystem : ModSystem
         config ??= new PatternBookConfig();
         api.StoreModConfig(config, PatternBookConfig.FileName);
         return config;
+    }
+
+    const string ConfigKitSystem = "ConfigKit.ConfigKitModSystem";
+    const string ConfigKitRegister = "RegisterManagedConfig";
+    const string ConfigKitGetConfig = "GetConfig";
+
+    /// <summary>Whether ConfigKit is installed and holds the config. Asserted in a test.</summary>
+    public static bool ConfigKitBound { get; private set; }
+
+    /// <summary>
+    /// Hands <see cref="Config"/> to ConfigKit if it is installed, for its settings screen.
+    /// Bound by reflection, as fornax and crucibulum do, so ConfigKit is optional to build
+    /// against as well as to run: the surface is one method taking BCL types. ConfigKit fills
+    /// in this same object, so the picker sees its changes without a callback, and it reloads
+    /// the file when the picker's switch writes it.
+    /// </summary>
+    void RegisterWithConfigKit(ICoreAPI api)
+    {
+        ConfigKitBound = false;
+        var system = api.ModLoader.GetModSystem(ConfigKitSystem);
+        if (system == null) return;   // not installed, which is the ordinary case
+
+        var register = system.GetType().GetMethod(ConfigKitRegister);
+        if (register == null)
+        {
+            api.Logger.Warning("[patternbook] ConfigKit is installed but has no {0}; Pattern Book's settings will not appear in it.", ConfigKitRegister);
+            return;
+        }
+
+        try
+        {
+            register.Invoke(system, ["patternbook", Config, PatternBookConfig.FileName, null, null, null]);
+
+            // A refusal (ConfigKit standing down for configlib, say) logs and returns rather
+            // than throwing, so ask whether it took the config rather than assume it did
+            ConfigKitBound = system.GetType().GetMethod(ConfigKitGetConfig)?.Invoke(system, ["patternbook"]) != null;
+        }
+        catch (Exception e)
+        {
+            // Reflection wraps the real failure in a TargetInvocationException that says nothing
+            api.Logger.Warning("[patternbook] Could not hand the config to ConfigKit: {0}",
+                (e as System.Reflection.TargetInvocationException)?.InnerException ?? e);
+        }
     }
 
     public void SaveConfig()

@@ -61,6 +61,12 @@ installed. So Smithing Plus with its picker switched off does not make this mod 
 
 `ConfirmChoice` is the picker's switch; flipping it there writes it here.
 
+With [ConfigKit](https://github.com/dizzyd/configkit) installed, the same three settings
+are on its settings screen (**P**, or **Mod settings** in the pause menu). ConfigKit is
+optional: Pattern Book registers with it by reflection when it is there and does nothing
+when it is not. Every setting is marked `clientside`, so on a server running ConfigKit
+they stay yours rather than being shown read-only or replaced by the server's.
+
 ## Building
 
 ```bash
@@ -79,9 +85,10 @@ bash scripts/sync-linux.sh dizzyd@vsclient.home --mod ../patternbook/patternbook
 ssh dizzyd@vsclient.home 'cd vstestkit-patternbook && bash scripts/run.sh mods/patternbook/tests --mod mods/patternbook/patternbook --client'
 ```
 
-Two tests need the real Smithing Plus and AnvilGuard and skip without them. Run
-`tests/fixtures/fetch.sh` (it checks each download's sha256), then add
-`--mods $PWD/mods/patternbook/tests/fixtures/Mods`. The path must be absolute.
+Some tests need the real Smithing Plus, AnvilGuard and ConfigKit, and skip or no-op
+without them. Run `tests/fixtures/fetch.sh` on the box (it checks each download's
+sha256), then add `--mods $PWD/mods/patternbook/tests/fixtures/Mods`. The path must be
+absolute. Run the fetch after each `sync-linux.sh`, which clears the fixtures.
 
 ## Screenshots
 

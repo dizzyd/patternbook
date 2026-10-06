@@ -20,3 +20,7 @@ fetch smithingplus_1.9.0-rc.1.zip \
 fetch AnvilGuard_1.0.0.zip \
     "https://moddbcdn.vintagestory.at/AnvilGuard_1.0.0_a70810d55d8695803b83303912fe8303.zip?dl=AnvilGuard_1.0.0.zip" \
     7df85a0e8eddfd5c16d3caf3de888b92b5992e800f0aceb0c8eb590f023f8688
+# ConfigKit's own attested GitHub release; the sha256 is the one in its release notes
+fetch configkit_1.4.2.zip \
+    "https://github.com/dizzyd/configkit/releases/download/v1.4.2/configkit_1.4.2.zip" \
+    9e6aaa620a4ebaf11953a3918c7e90952ddbae0dcd36eff7aae9474d8f9cb564
