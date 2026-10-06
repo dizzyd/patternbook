@@ -1,0 +1,14 @@
+{
+    "type": "code",
+    "modid": "patternbook",
+    "name": "Pattern Book",
+    "authors": [
+        "dizzyd"
+    ],
+    "description": "Sorts the smithing and clay forming recipe pickers by name, makes them searchable, and scrolls them instead of letting them grow off the screen.",
+    "version": "0.1.0",
+    "side": "Client",
+    "requiredOnClient": false,
+    "requiredOnServer": false,
+    "dependencies": { "game": "1.22.0" }
+}
