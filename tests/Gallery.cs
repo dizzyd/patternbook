@@ -5,6 +5,7 @@ using HarmonyLib;
 using patternbook;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
 using Vintagestory.GameContent;
 using VsTestkit.Testing;
@@ -49,7 +50,7 @@ namespace PatternBook.Tests
         public async Task AnvilPicker()
         {
             var dlg = await OpenAnvil();
-            await Hover(dlg, "Iron pickaxe head");
+            await Select(dlg, "Iron pickaxe head");
             await Snap("anvil");
         }
 
@@ -58,7 +59,7 @@ namespace PatternBook.Tests
         {
             var dlg = await OpenAnvil();
             await Input.Type("head");
-            await Hover(dlg, "Iron axe head");
+            await Select(dlg, "Iron axe head");
             await Snap("anvil-search");
         }
 
@@ -67,8 +68,57 @@ namespace PatternBook.Tests
         {
             var dlg = await OpenClayForm();
             await Input.Type("mold");
-            await Hover(dlg, "Raw blue clay pickaxe mold");
+            await Select(dlg, "Raw blue clay pickaxe mold");
             await Snap("clayforming-search");
+        }
+
+        /// <summary>
+        /// The ModDB mod icon, cropped to 480x480 by scripts/screenshots.sh using the bounds this
+        /// logs. A real clay forming picker, but given eight of its mold recipes rather than all of
+        /// them: eight columns make it narrow enough to fit the square, where the full list's ten
+        /// do not at this window size.
+        /// </summary>
+        [VsTest(TimeoutMs = 60000)]
+        public async Task Icon()
+        {
+            await SetScene(
+                ("game:toolmold-blue-raw-pickaxe", Prop),
+                ("game:storagevessel-blue-raw", PropBeside));
+
+            await OnClient();
+            string[] molds = ["anvil", "axe", "blade-falx", "hammer", "hoe", "pickaxe", "prospectingpick", "shovel"];
+            var stacks = molds
+                .Select(m => Capi.World.GetBlock(new AssetLocation($"game:toolmold-blue-raw-{m}")))
+                .Where(b => b != null && b.Id != 0)
+                .Select(b => new ItemStack(b))
+                .ToArray();
+            Assert.Equal(molds.Length, stacks.Length, "every mold resolved");
+
+            var dlg = new GuiDialogSearchableRecipeSelector(Lang.Get("Select recipe"), stacks, _ => { }, () => { }, Prop, Capi);
+
+            // The clay each takes, by vanilla's own formula in BlockEntityClayForm.OpenDialog
+            var clay = Capi.World.GetItem(new AssetLocation("game:clay-blue"));
+            var recipes = Capi.GetClayformingRecipes();
+            for (int i = 0; i < stacks.Length; i++)
+            {
+                var recipe = recipes.First(r => r.Output.ResolvedItemstack?.Collectible.Code == stacks[i].Collectible.Code);
+                int voxels = recipe.Voxels.Cast<bool>().Count(v => v);
+                dlg.SetIngredientCounts(i, [new ItemStack(clay, (int)Math.Ceiling(Math.Max(1, (voxels - 64) / 25f)))]);
+            }
+
+            dlg.TryOpen();
+            await Frames.Wait(5);
+            await Input.Type("mold");
+            await Select(dlg, "Raw blue clay pickaxe mold");
+            await Frames.Wait(30);
+
+            await OnClient();
+            var b = dlg.SingleComposer.Bounds;
+            Log($"icon-bounds {(int)b.absX} {(int)b.absY} {(int)b.OuterWidth} {(int)b.OuterHeight} frame {Capi.Render.FrameWidth} {Capi.Render.FrameHeight}");
+            Log(await Shot.Take("patternbook-gallery-icon-full.png"));
+
+            await OnClient();
+            dlg.TryClose();
         }
 
         /// <summary>Midday, with what is being worked on in view beside where the picker opens.</summary>
@@ -113,8 +163,12 @@ namespace PatternBook.Tests
             return await Gui.WaitFor<GuiDialogSearchableRecipeSelector>(120);
         }
 
-        /// <summary>Puts the mouse over the named recipe, so the picker shows its name and description.</summary>
-        static async Task Hover(GuiDialogSearchableRecipeSelector dlg, string name)
+        /// <summary>
+        /// Selects the named recipe the way a player does, by pointing at it, then moves the mouse
+        /// off the picker: the selection outline and the details stay, without the hover fill
+        /// drawn over them.
+        /// </summary>
+        static async Task Select(GuiDialogSearchableRecipeSelector dlg, string name)
         {
             await Frames.Wait(5);
             await OnClient();
@@ -128,6 +182,12 @@ namespace PatternBook.Tests
             double x = grid.Bounds.absX + (index % cols + 0.5) * cell;
             double y = grid.Bounds.absY + (index / cols + 0.5) * cell;
             await Input.MouseMove((int)x, (int)y);
+            await Frames.Wait(5);
+
+            await OnClient();
+            var selected = ((GuiElementScrollingSkillGrid)dlg.SingleComposer.GetElement("grid")).SelectedIndex;
+            Assert.Equal(index, selected, $"'{name}' is selected");
+            await Input.MouseMove(5, 5);
         }
 
         static async Task Snap(string name)

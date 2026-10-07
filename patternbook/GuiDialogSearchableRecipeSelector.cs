@@ -159,7 +159,7 @@ public class GuiDialogSearchableRecipeSelector : GuiDialogGeneric
 
         // Search row: [search box][12 of 60][switch Confirm]
         double confirmWidth = 100;
-        double countWidth = 70;
+        double countWidth = 90;
         double searchWidth = innerWidth - countWidth - confirmWidth - 20;
         ElementBounds searchBounds = ElementBounds.Fixed(0, 30, searchWidth, 30);
         double rowTop = 30, rowHeight = 30;
@@ -174,9 +174,9 @@ public class GuiDialogSearchableRecipeSelector : GuiDialogGeneric
         ElementBounds scrollbarBounds = ElementBounds.Fixed(gridLeft + gridWidth + ScrollbarGap, GridTop, ScrollbarWidth, gridHeight);
 
         // Details: the name with what it takes on the right, and the description under them
-        double requiresWidth = 180;
-        ElementBounds nameBounds = ElementBounds.Fixed(0, GridTop + gridHeight + 12, innerWidth - requiresWidth - 10, 30);
-        ElementBounds requiresBounds = ElementBounds.Fixed(innerWidth - requiresWidth, nameBounds.fixedY + 5, requiresWidth, 25);
+        // The name's width is set per recipe in ShowDetails, to whatever the material leaves it
+        ElementBounds nameBounds = ElementBounds.Fixed(0, GridTop + gridHeight + 12, innerWidth, 30);
+        ElementBounds requiresBounds = ElementBounds.Fixed(0, nameBounds.fixedY + 5, innerWidth, 25);
         ElementBounds descBounds = ElementBounds.Fixed(0, nameBounds.fixedY + 32, innerWidth, 40);
 
         ElementBounds bgBounds = ElementBounds.Fill.WithFixedPadding(GuiStyle.ElementToDialogPadding);
@@ -297,7 +297,13 @@ public class GuiDialogSearchableRecipeSelector : GuiDialogGeneric
 
     void ShowDetails(string name, string desc, string requires)
     {
-        SingleComposer.GetDynamicText("name").SetNewText(name);
+        // The material is right-aligned across the whole row; the name gets the rest, so a
+        // long name in a narrow picker is not cut off to make room for a fixed-width column
+        double requiresWidth = requires.Length == 0 ? 0
+            : CairoFont.WhiteDetailText().GetTextExtents(requires).Width / GuiElement.scaled(1) + 15;
+        var nameText = SingleComposer.GetDynamicText("name");
+        nameText.Bounds.fixedWidth = innerWidth - requiresWidth;
+        nameText.SetNewText(name, forceRedraw: true);
         SingleComposer.GetDynamicText("desc").SetNewText(desc);
         SingleComposer.GetDynamicText("requires").SetNewText(requires);
     }

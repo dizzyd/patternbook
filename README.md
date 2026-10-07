@@ -98,9 +98,15 @@ bash scripts/screenshots.sh            # or: bash scripts/screenshots.sh user@ho
 
 This runs the `Gallery` tests on the test box and copies the PNGs into `screenshots/`
 (gitignored):
-- `anvil`: the full anvil list, with a recipe hovered
+- `anvil`: the full anvil list, with a recipe selected
 - `anvil-search`: the anvil list searched for "head"
 - `clayforming-search`: the clay forming list searched for "mold"
+- `icon-full`, and `modicon.png` cut from it at 480×480 for the ModDB mod icon. The picker
+  is given eight of the clay forming molds rather than all of them, so it is narrow enough
+  to fit the square. The crop needs macOS's `sips`.
+
+Each shot selects its recipe by pointing at it, then moves the mouse away, so the outline
+and details show without the hover fill over them.
 
 The scenes are set at midday on a fixed day, so repeat runs come out the same.
 

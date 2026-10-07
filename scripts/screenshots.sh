@@ -38,9 +38,16 @@ ssh "$host" 'rm -f ~/.cairn/games/*/patternbook-gallery-*.png
     cd vstestkit-patternbook && bash scripts/run.sh mods/patternbook/tests --mod mods/patternbook/patternbook --client --filter Gallery' || status=$?
 
 mkdir -p "$out"
-rm -f "$out"/patternbook-gallery-*.png
+rm -f "$out"/patternbook-gallery-*.png "$out"/modicon.png
 scp -q "$host:.cairn/games/*/patternbook-gallery-*.png" "$out/" || true
 ssh "$host" 'rm -f ~/.cairn/games/*/patternbook-gallery-*.png'
+
+# The mod icon: a 480x480 square from the icon shot, centred across the picker and from the
+# top of the frame, which keeps the hotbar out of it
+icon="$out/patternbook-gallery-icon-full.png"
+if [ -f "$icon" ]; then
+    sips -c 480 480 --cropOffset 0 240 "$icon" --out "$out/modicon.png" >/dev/null
+fi
 
 ls -1 "$out"
 exit "$status"
